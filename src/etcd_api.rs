@@ -5,6 +5,7 @@ use tokio::sync::Mutex;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use etcd_client::TlsOptions;
 use etcd_client::*;
 use thiserror::Error;
 
@@ -133,6 +134,25 @@ impl EtcdClient {
         lease_timeout: i64,
         connect_timeout: u64,
     ) -> Result<EtcdClient> {
+        Self::new_with_tls(
+            uris,
+            credentials,
+            path,
+            lease_timeout,
+            connect_timeout,
+            None,
+        )
+        .await
+    }
+
+    pub async fn new_with_tls(
+        uris: &[&str],
+        credentials: &Option<(&str, &str)>,
+        path: &str,
+        lease_timeout: i64,
+        connect_timeout: u64,
+        tls: Option<TlsOptions>,
+    ) -> Result<EtcdClient> {
         info!("Connecting to {:?} etcd server", &uris);
         let mut client = Client::connect(
             uris,
@@ -140,6 +160,9 @@ impl EtcdClient {
                 let mut opts = ConnectOptions::new();
                 if let Some((user, password)) = credentials {
                     opts = opts.with_user(*user, *password);
+                }
+                if let Some(tls) = tls {
+                    opts = opts.with_tls(tls);
                 }
                 opts.with_timeout(Duration::from_secs(connect_timeout))
             }),

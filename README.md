@@ -1,2 +1,6 @@
-# etcd_dynamic_state
-A library representing the state dynamically updated from Etcd watched endpoint 
+# Etcd Dynamic State
+
+A simple library representing the state dynamically updated from Etcd watched endpoint. Mostly used for retrieval data
+from Etcd and keeping it up to date.
+
+
