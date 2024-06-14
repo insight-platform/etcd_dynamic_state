@@ -319,16 +319,80 @@ mod tests {
     use crate::etcd_api::{EtcdClient, KVOperator, Operation, VarPathSpec, WatchResult};
     use anyhow::Result;
     use async_trait::async_trait;
+    use bollard::container::{
+        Config, CreateContainerOptions, RemoveContainerOptions, StartContainerOptions,
+    };
+    use bollard::models::{HostConfig, PortBinding};
+    use bollard::Docker;
+    use etcd_client::{Certificate, Identity, TlsOptions};
     use log::info;
+    use std::process::Command;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::sync::Mutex;
 
     #[tokio::test]
-    #[ignore]
-    async fn test_monitor() -> Result<()> {
+    async fn test_monitor_no_tls() -> Result<()> {
         _ = env_logger::try_init();
-        let mut client = EtcdClient::new(&["127.0.0.1:2379"], &None, "local/node", 5, 10).await?;
+        let docker = Docker::connect_with_local_defaults()?;
+
+        let name = "test-etcd-no-tls";
+        let _ = docker
+            .remove_container(
+                name,
+                Some(RemoveContainerOptions {
+                    force: true,
+                    ..Default::default()
+                }),
+            )
+            .await;
+
+        let ccr = docker
+            .create_container(
+                Some(CreateContainerOptions {
+                    name: name.to_string(),
+                    platform: None,
+                }),
+                Config {
+                    image: Some("bitnami/etcd:latest".to_string()),
+                    env: Some(vec!["ALLOW_NONE_AUTHENTICATION=yes".to_string()]),
+                    host_config: Some(HostConfig {
+                        port_bindings: Some(
+                            vec![(
+                                "2379/tcp".to_string(),
+                                Some(vec![PortBinding {
+                                    host_ip: None,
+                                    host_port: Some("22379".to_string()),
+                                }]),
+                            )]
+                            .into_iter()
+                            .collect(),
+                        ),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )
+            .await?;
+
+        docker
+            .start_container(name, None::<StartContainerOptions<String>>)
+            .await?;
+
+        let mut client;
+        let mut max_retries = 10;
+        loop {
+            let c = EtcdClient::new(&["127.0.0.1:22379"], &None, "local/node", 5, 20).await;
+            if c.is_ok() {
+                client = c?;
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            max_retries -= 1;
+            if max_retries == 0 {
+                panic!("Failed to connect to Etcd in {}", max_retries);
+            }
+        }
 
         client
             .kv_operations(vec![
@@ -430,6 +494,129 @@ mod tests {
         });
 
         tokio::join!(t).0?;
+
+        docker
+            .remove_container(
+                &ccr.id,
+                Some(RemoveContainerOptions {
+                    force: true,
+                    ..Default::default()
+                }),
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_monitor_with_tls() -> Result<()> {
+        // create keys with utility script utils/gen_keys.sh
+        // run script
+        let c = Command::new("sh")
+            .arg("-c")
+            .arg("utils/gen_keys.sh")
+            .output()
+            .expect("Failed to execute command");
+        assert!(c.status.success());
+
+        _ = env_logger::try_init();
+        let docker = Docker::connect_with_local_defaults()?;
+
+        let name = "test-etcd-with-tls";
+        let _ = docker
+            .remove_container(
+                name,
+                Some(RemoveContainerOptions {
+                    force: true,
+                    ..Default::default()
+                }),
+            )
+            .await;
+
+        let pwd = std::env::current_dir()?;
+        let ccr = docker
+            .create_container(
+                Some(CreateContainerOptions {
+                    name: name.to_string(),
+                    platform: None,
+                }),
+                Config {
+                    image: Some("bitnami/etcd:latest".to_string()),
+                    env: Some(vec![
+                        "ALLOW_NONE_AUTHENTICATION=yes".to_string(),
+                        "ETCD_TRUSTED_CA_FILE=/etc/etcd-ssl/ca.crt".to_string(),
+                        "ETCD_CERT_FILE=/etc/etcd-ssl/server.crt".to_string(),
+                        "ETCD_KEY_FILE=/etc/etcd-ssl/server.key".to_string(),
+                        "ETCD_LISTEN_CLIENT_URLS=https://0.0.0.0:2379".to_string(),
+                        "ETCD_ADVERTISE_CLIENT_URLS=https://127.0.0.1:32379".to_string(),
+                        "ETCD_CLIENT_CERT_AUTH=true".to_string(),
+                    ]),
+                    host_config: Some(HostConfig {
+                        binds: Some(vec![format!(
+                            "{}/assets/certs:/etc/etcd-ssl",
+                            pwd.display()
+                        )]),
+                        port_bindings: Some(
+                            vec![(
+                                "2379/tcp".to_string(),
+                                Some(vec![PortBinding {
+                                    host_ip: None,
+                                    host_port: Some("32379".to_string()),
+                                }]),
+                            )]
+                            .into_iter()
+                            .collect(),
+                        ),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )
+            .await?;
+
+        docker
+            .start_container(name, None::<StartContainerOptions<String>>)
+            .await?;
+
+        let mut max_retries = 20;
+        let ca = Certificate::from_pem(std::fs::read("assets/certs/ca.crt")?);
+
+        let tls_opts = TlsOptions::default()
+            .ca_certificate(ca)
+            .identity(Identity::from_pem(
+                std::fs::read("assets/certs/client.crt")?,
+                std::fs::read("assets/certs/client.key")?,
+            ));
+
+        loop {
+            let c = EtcdClient::new_with_tls(
+                &["https://127.0.0.1:32379"],
+                &None,
+                "local/node",
+                5,
+                20,
+                Some(tls_opts.clone()),
+            )
+            .await;
+            if c.is_ok() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            max_retries -= 1;
+            if max_retries == 0 {
+                panic!("Failed to connect to Etcd in {}", max_retries);
+            }
+        }
+
+        docker
+            .remove_container(
+                &ccr.id,
+                Some(RemoveContainerOptions {
+                    force: true,
+                    ..Default::default()
+                }),
+            )
+            .await?;
 
         Ok(())
     }
