@@ -319,16 +319,78 @@ mod tests {
     use crate::etcd_api::{EtcdClient, KVOperator, Operation, VarPathSpec, WatchResult};
     use anyhow::Result;
     use async_trait::async_trait;
+    use bollard::container::{
+        Config, CreateContainerOptions, RemoveContainerOptions, StartContainerOptions,
+    };
+    use bollard::models::{HostConfig, PortBinding};
+    use bollard::Docker;
     use log::info;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::sync::Mutex;
 
     #[tokio::test]
-    #[ignore]
     async fn test_monitor() -> Result<()> {
         _ = env_logger::try_init();
-        let mut client = EtcdClient::new(&["127.0.0.1:2379"], &None, "local/node", 5, 10).await?;
+        let docker = Docker::connect_with_local_defaults()?;
+
+        let name = "test-etcd";
+        let _ = docker
+            .remove_container(
+                name,
+                Some(RemoveContainerOptions {
+                    force: true,
+                    ..Default::default()
+                }),
+            )
+            .await;
+
+        let ccr = docker
+            .create_container(
+                Some(CreateContainerOptions {
+                    name: name.to_string(),
+                    platform: None,
+                }),
+                Config {
+                    image: Some("bitnami/etcd:latest".to_string()),
+                    env: Some(vec!["ALLOW_NONE_AUTHENTICATION=yes".to_string()]),
+                    host_config: Some(HostConfig {
+                        port_bindings: Some(
+                            vec![(
+                                "2379/tcp".to_string(),
+                                Some(vec![PortBinding {
+                                    host_ip: None,
+                                    host_port: Some("22379".to_string()),
+                                }]),
+                            )]
+                            .into_iter()
+                            .collect(),
+                        ),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )
+            .await?;
+
+        docker
+            .start_container(name, None::<StartContainerOptions<String>>)
+            .await?;
+
+        let mut client;
+        let mut max_retries = 10;
+        loop {
+            let c = EtcdClient::new(&["127.0.0.1:22379"], &None, "local/node", 5, 20).await;
+            if c.is_ok() {
+                client = c?;
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            max_retries -= 1;
+            if max_retries == 0 {
+                panic!("Failed to connect to Etcd in {}", max_retries);
+            }
+        }
 
         client
             .kv_operations(vec![
@@ -430,6 +492,16 @@ mod tests {
         });
 
         tokio::join!(t).0?;
+
+        docker
+            .remove_container(
+                &ccr.id,
+                Some(RemoveContainerOptions {
+                    force: true,
+                    ..Default::default()
+                }),
+            )
+            .await?;
 
         Ok(())
     }

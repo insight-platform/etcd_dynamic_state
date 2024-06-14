@@ -1,6 +1,6 @@
 [package]
 name = "etcd_dynamic_state"
-version = "0.2.11"
+version = "0.2.12"
 edition = "2021"
 authors = ["Ivan Kudriavtsev <ivan.a.kudryavtsev@gmail.com>"]
 description = "Etcd dynamic state library"
@@ -37,3 +37,6 @@ parking_lot = "0.12"
 [dependencies.tokio]
 version = "1.36"
 features = ["rt-multi-thread", "macros"]
+
+[dev-dependencies]
+bollard = "0.16"
