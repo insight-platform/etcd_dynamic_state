@@ -15,3 +15,5 @@ openssl x509 -req -days 365000 -in $DIR/server.csr -CA $DIR/ca.crt -CAkey $DIR/c
 openssl genpkey -algorithm RSA -out $DIR/client.key
 openssl req -new -key $DIR/client.key -out $DIR/client.csr -subj "/CN=localhost"
 openssl x509 -req -days 365000 -in $DIR/client.csr -CA $DIR/ca.crt -CAkey $DIR/ca.key -CAcreateserial -out $DIR/client.crt -extfile <(echo "subjectAltName=IP:127.0.0.1")
+
+chmod 0666 $DIR/*
