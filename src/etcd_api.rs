@@ -9,7 +9,7 @@ use etcd_client::TlsOptions;
 use etcd_client::*;
 use thiserror::Error;
 
-use log::{info, warn};
+use log::{debug, info, warn};
 
 const WATCH_WAIT_TTL: u64 = 100;
 
@@ -90,7 +90,7 @@ impl VarPathSpec {
                 match resp.kvs().first() {
                     Some(res) => {
                         let value = Vec::from(res.value());
-                        info!("Etcd Get: Key={}, Value={:?}", res.key_str()?, value);
+                        debug!("Etcd Get: Key={}, Value={:?}", res.key_str()?, value);
                         Ok((res.key_str()?.to_string(), value))
                     }
                     None => {
@@ -112,7 +112,7 @@ impl VarPathSpec {
                 let mut result = Vec::default();
                 for kv in resp.kvs() {
                     let value = Vec::from(kv.value());
-                    info!("Etcd Get Prefix: Key={}, Value={:?}", kv.key_str()?, value);
+                    debug!("Etcd Get Prefix: Key={}, Value={:?}", kv.key_str()?, value);
                     result.push((kv.key_str()?.to_string(), value));
                 }
                 Ok(result)
@@ -325,7 +325,7 @@ mod tests {
     use bollard::models::{HostConfig, PortBinding};
     use bollard::Docker;
     use etcd_client::{Certificate, Identity, TlsOptions};
-    use log::info;
+    use log::{debug, info};
     use std::process::Command;
     use std::sync::Arc;
     use std::time::Duration;
@@ -354,7 +354,7 @@ mod tests {
                     platform: None,
                 }),
                 Config {
-                    image: Some("bitnami/etcd:latest".to_string()),
+                    image: Some("bitnamilegacy/etcd:3.6.4-debian-12-r4".to_string()),
                     env: Some(vec!["ALLOW_NONE_AUTHENTICATION=yes".to_string()]),
                     host_config: Some(HostConfig {
                         port_bindings: Some(
@@ -443,7 +443,7 @@ mod tests {
         #[async_trait]
         impl WatchResult for Watcher {
             async fn notify(&mut self, _client: &mut EtcdClient, res: Operation) -> Result<()> {
-                info!("Operation: {:?}", &res);
+                debug!("Operation: {:?}", &res);
                 self.counter += 1;
                 self.watch_result = res;
                 Ok(())
@@ -541,7 +541,7 @@ mod tests {
                     platform: None,
                 }),
                 Config {
-                    image: Some("bitnami/etcd:latest".to_string()),
+                    image: Some("bitnamilegacy/etcd:3.6.4-debian-12-r4".to_string()),
                     env: Some(vec![
                         "ALLOW_NONE_AUTHENTICATION=yes".to_string(),
                         "ETCD_TRUSTED_CA_FILE=/etc/etcd-ssl/ca.crt".to_string(),

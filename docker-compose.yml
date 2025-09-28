@@ -1,7 +1,7 @@
 version: "3"
 services:
   etcd:
-    image: bitnami/etcd:latest
+    image: docker.io/bitnamilegacy/etcd:3.6.4-debian-12-r4
     restart: on-failure
     environment:
       - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
